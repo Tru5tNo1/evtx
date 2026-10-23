@@ -17,6 +17,7 @@ pub use evtx_record::{
 pub use utils::utf16::{Utf16LeDecodeError, Utf16LeSlice};
 
 pub mod binxml;
+pub mod canonical;
 pub mod err;
 pub mod model;
 

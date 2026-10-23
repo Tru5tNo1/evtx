@@ -13,6 +13,7 @@ edition = "2024"
 exclude = ["**/*.evtx", "**/*.dat"]
 
 [dependencies]
+sha2 = "0.10"
 bitflags = "2"
 crc32fast = "1"
 encoding_rs = "0.8"

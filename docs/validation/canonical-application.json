@@ -1,0 +1,40 @@
+{
+  "schema": "evtx-teg/1.1.0",
+  "sample": "Application.evtx",
+  "sha256": "01807b966dff841e192595e5a6f0aec65fe0f6cf0631409bd9774d0829a5a777",
+  "events": 6419,
+  "projection_notes_by_field": {
+    "Data": 3509,
+    "Version": 3,
+    "EventID": 2
+  },
+  "detections": {
+    "A": 58,
+    "B": 58,
+    "metadata-control": 58
+  },
+  "unique_rules": 3,
+  "powershell": {
+    "max_scriptblock_chars": 0
+  },
+  "required_rules": [],
+  "native_channel_filter_disabled": true,
+  "compared_fields": [
+    "RuleID",
+    "RecordID",
+    "Timestamp",
+    "Level",
+    "Computer",
+    "Channel",
+    "EventID"
+  ],
+  "equivalent": true,
+  "hayabusa_commit": "a5f0e010893a8c388e693019e3fbb8f374a9f9c0",
+  "rules_commit": "e9a98d49313eed67fe1a2c21c0b108e04fdebe66",
+  "expected_differences": [
+    "EvtxFile names the JSONL input in B; _teg.source retains EVTX provenance",
+    "ExtraFieldInfo contains the canonical fields and metadata in B"
+  ],
+  "export_mode": "canonical-named-file",
+  "parser_sha256": "86ad46de6f7b407371a9b26ab1f6b486f5d5c930fb873235ae7e5dc449f6f637"
+}

@@ -1,0 +1,88 @@
+name: Canonical JSONL Hayabusa compatibility
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'scripts/validate_hayabusa.py'
+      - 'scripts/*Hayabusa*.ps1'
+      - 'scripts/*Evtx*.ps1'
+      - '.github/workflows/canonical-jsonl.yml'
+
+jobs:
+  windows-audit:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Verify comparison diagnostics in Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\Test-HayabusaComparison.ps1
+  detections:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          path: evtx
+          lfs: true
+      - uses: actions/checkout@v6
+        with:
+          repository: Yamato-Security/hayabusa
+          ref: a5f0e010893a8c388e693019e3fbb8f374a9f9c0
+          path: tools/hayabusa
+          submodules: true
+      - uses: actions/checkout@v6
+        with:
+          repository: Yamato-Security/hayabusa-sample-evtx
+          ref: 0845333ecb4afcf64c55c6e10946383f168f308c
+          path: tools/powershell-samples
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /DeepBlueCLI/Powershell-Invoke-Obfuscation-many.evtx
+            /YamatoSecurity/ImpairDefenses/T1562.010_DowngradeAttack_PowerShell.evtx
+            /EVTX-to-MITRE-Attack/TA0005-Defense Evasion/T1562.001-Impair Defenses-Disable or Modify tool/ID800-4103-4104 Defender critical features disabled (PowerShell).evtx
+      - uses: dtolnay/rust-toolchain@1.99.1
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            evtx
+            tools/hayabusa
+      - name: Build parser and run Rust tests
+        working-directory: evtx
+        run: |
+          cargo test --locked
+          cargo test --locked --manifest-path utf16-simd/Cargo.toml
+          cargo build --release --locked --bin evtx_dump
+      - name: Build unmodified Hayabusa
+        working-directory: tools/hayabusa
+        run: cargo build --release --locked
+      - name: Require equivalent nonzero detections and metadata tolerance
+        working-directory: evtx
+        run: |
+          python3 -m pip install --disable-pip-version-check jsonschema==4.25.1
+          python3 scripts/validate_hayabusa.py --hayabusa ../tools/hayabusa --output "$RUNNER_TEMP/canonical/account"
+          python3 scripts/validate_hayabusa.py --hayabusa ../tools/hayabusa --sample samples/system.evtx --output "$RUNNER_TEMP/canonical/system"
+          python3 scripts/validate_hayabusa.py --hayabusa ../tools/hayabusa --sample samples/Application.evtx --output "$RUNNER_TEMP/canonical/application"
+          python3 scripts/validate_hayabusa.py --hayabusa ../tools/hayabusa \
+            --sample "../tools/powershell-samples/DeepBlueCLI/Powershell-Invoke-Obfuscation-many.evtx" \
+            --sample-sha256 2fa243e52ab2bba2ad3bc7a1a14ea653a1508575e703c494cfc36e78c219a5ad \
+            --require-rule 73be1519-4648-4ed7-b305-605504afc242 \
+            --output "$RUNNER_TEMP/canonical/powershell-obfuscated"
+          python3 scripts/validate_hayabusa.py --hayabusa ../tools/hayabusa \
+            --sample "../tools/powershell-samples/YamatoSecurity/ImpairDefenses/T1562.010_DowngradeAttack_PowerShell.evtx" \
+            --sample-sha256 3948b0d598f1d24a098933a330d00f4082ee9dc98d8e83dd1be1322a88fcba7a \
+            --require-rule bc082394-73e6-4d00-a9af-e7b524ef5085 \
+            --output "$RUNNER_TEMP/canonical/powershell-downgrade"
+          python3 scripts/validate_hayabusa.py --hayabusa ../tools/hayabusa \
+            --sample "../tools/powershell-samples/EVTX-to-MITRE-Attack/TA0005-Defense Evasion/T1562.001-Impair Defenses-Disable or Modify tool/ID800-4103-4104 Defender critical features disabled (PowerShell).evtx" \
+            --sample-sha256 0dc4798e88c84a54d39cde42613fdd4e521d9bc9a1832e62ae8e56aac10afb4c \
+            --require-rule 6074ad34-a80f-fdd9-5c49-e1a2fc4572c4 \
+            --output "$RUNNER_TEMP/canonical/powershell-defender"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: canonical-jsonl-validation
+          path: ${{ runner.temp }}/canonical
