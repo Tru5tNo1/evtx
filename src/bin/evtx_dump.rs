@@ -252,7 +252,8 @@ impl EvtxDump {
             EvtxParser::from_read_seek(file)?.with_configuration(self.parser_settings.clone());
         if let Some(source) = source {
             for chunk in parser.chunks_canonical_json_bytes(source) {
-                self.dump_chunk(chunk)?;
+                self.dump_chunk(chunk)
+                    .with_context(|| format!("Input EVTX: {}", self.input.display()))?;
             }
             self.output.flush()?;
             return Ok(());

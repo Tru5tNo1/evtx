@@ -1,0 +1,33 @@
+{
+  "schema": "evtx-teg/1.1.0",
+  "sample": "Application.evtx",
+  "sha256": "01807b966dff841e192595e5a6f0aec65fe0f6cf0631409bd9774d0829a5a777",
+  "events": 6419,
+  "projection_notes_by_field": {
+    "Data": 3509,
+    "Version": 3,
+    "EventID": 2
+  },
+  "detections": {
+    "A": 58,
+    "B": 58,
+    "metadata-control": 58
+  },
+  "unique_rules": 3,
+  "compared_fields": [
+    "RuleID",
+    "RecordID",
+    "Timestamp",
+    "Level",
+    "Computer",
+    "Channel",
+    "EventID"
+  ],
+  "equivalent": true,
+  "hayabusa_commit": "a5f0e010893a8c388e693019e3fbb8f374a9f9c0",
+  "rules_commit": "e9a98d49313eed67fe1a2c21c0b108e04fdebe66",
+  "expected_differences": [
+    "EvtxFile names the JSONL input in B; _teg.source retains EVTX provenance",
+    "ExtraFieldInfo contains the canonical fields and metadata in B"
+  ]
+}

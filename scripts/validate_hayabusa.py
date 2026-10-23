@@ -84,7 +84,10 @@ def main():
         assert any(row[0] == "13edce80-2b02-4469-8de4-a3e37271dcdb" for row in results["A"]), \
             "Known account-creation rule did not fire"
     summary = {
+        "schema": events[0]["_teg"]["schema"],
         "sample": sample.name, "sha256": source_hash, "events": len(events),
+        "projection_notes_by_field": dict(collections.Counter(
+            note["field"] for row in events for note in row["_teg"].get("projection_conflicts", []))),
         "detections": {label: sum(rows.values()) for label, rows in results.items()},
         "unique_rules": len({row[0] for row in results["A"]}),
         "compared_fields": fields, "equivalent": True,

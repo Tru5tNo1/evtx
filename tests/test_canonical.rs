@@ -46,7 +46,7 @@ fn original_evtx_exports_stable_unique_events_with_hayabusa_aliases() {
             system["TimeCreated_attributes"]["SystemTime"]
         );
         assert_eq!(row["_teg"]["event_time"], row["@timestamp"]);
-        assert_eq!(row["_teg"]["schema"], "evtx-teg/1.0.0");
+        assert_eq!(row["_teg"]["schema"], "evtx-teg/1.1.0");
         assert!(row["_teg"]["acquired_at"].is_null());
         assert_eq!(row["_teg"]["source"]["sha256"].as_str().unwrap().len(), 64);
         assert!(ids.insert(row["_teg"]["event_uid"].as_str().unwrap().to_owned()));
@@ -68,6 +68,23 @@ fn original_evtx_exports_stable_unique_events_with_hayabusa_aliases() {
         detection_event,
         "fixture must contain known account-creation detections"
     );
+}
+
+#[test]
+fn application_evtx_with_real_payload_system_collisions_exports_completely() {
+    let rows = export("samples/Application.evtx", "4");
+    let mut parser = evtx::EvtxParser::from_path("samples/Application.evtx").unwrap();
+    let original: Vec<_> = parser.records().map(|r| r.unwrap()).collect();
+    assert_eq!(rows.len(), original.len());
+    let mut conflicts = BTreeSet::new();
+    for row in rows {
+        for collision in row["_teg"]["projection_conflicts"].as_array().unwrap() {
+            conflicts.insert(collision["field"].as_str().unwrap().to_owned());
+        }
+        assert_eq!(row["EventID"], row["Event"]["System"]["EventID"]);
+    }
+    assert!(conflicts.contains("Version"));
+    assert!(conflicts.contains("EventID"));
 }
 
 #[test]

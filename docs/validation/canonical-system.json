@@ -1,7 +1,11 @@
 {
+  "schema": "evtx-teg/1.1.0",
   "sample": "system.evtx",
   "sha256": "60e5fd8f10a3deecd58bd7bee2e03b1308d190fd13b52908be9d576c7f5d6623",
   "events": 1881,
+  "projection_notes_by_field": {
+    "Data": 404
+  },
   "detections": {
     "A": 138,
     "B": 138,

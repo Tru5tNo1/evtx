@@ -11,6 +11,7 @@ rules submodule at `e9a98d49313eed67fe1a2c21c0b108e04fdebe66`.
 | --- | ---: | ---: | ---: | ---: | ---: |
 | `samples/new-user-security.evtx` | 4 | 3 | 3 | 3 | 3 |
 | `samples/system.evtx` | 1,881 | 138 | 138 | 138 | 13 |
+| `samples/Application.evtx` | 6,419 | 58 | 58 | 58 | 3 |
 
 Detection multisets match exactly on **RuleID, RecordID, Timestamp, Level,
 Computer, Channel and EventID**, including multiplicity. Output order is not used
@@ -34,6 +35,22 @@ Machine-readable results include fixture SHA-256 values and pinned revisions:
 
 * [Account fixture](validation/canonical-account.json)
 * [System fixture](validation/canonical-system.json)
+* [Application fixture, including collisions](validation/canonical-application.json)
+
+Schema 1.1.0 regression coverage includes the real Application records with
+different `System.Version`/`EventData.Version` and `System.EventID`/`EventData.EventID`.
+The original 1.0.0 exporter rejected this fixture. Standard Hayabusa aliases now
+select the system value for these names, while the unaliased `Task` field selects
+the payload value. A synthetic regression exercises exactly that reported Task
+collision and verifies both original structured values remain intact, with an
+explicit `_teg.projection_conflicts` entry.
+
+The expanded A/B test initially found 14 missing MSI detections because unnamed
+Data was an object/array in the compatibility projection. The pinned native
+Hayabusa renderer concatenates that text into a scalar. Version 1.1.0 matches
+that behavior only in root `Data`, retains the original item array under
+`Event.EventData.Data.#text`, and records the projection in `_teg`. All 58 native
+Application detections now match, including the MSI suspicious-location rule.
 
 An additional attempted export of `samples/sysmon.evtx` found an invalid chunk
 header at physical chunk 9. Canonical mode correctly returned nonzero rather
@@ -81,11 +98,11 @@ explicit acquisition time, parallel determinism, and physical offsets past
 skipped empty chunks. XML evidence is compared against the original XML renderer
 for all 2,261 events in `samples/security.evtx`.
 
-The final local runs passed 142 tests in the main crate and 20 in `utf16-simd`,
+The final local runs passed 143 tests in the main crate and 20 in `utf16-simd`,
 with zero failures and four deliberately ignored tests across both runs.
 Release build, no-default-features library check and formatting check passed.
 Clippy completed successfully with repository warnings; it is not configured as
-a warnings-as-errors gate. Hosted CI remains to be run after opening the PR.
+a warnings-as-errors gate. Hosted CI validates each pushed PR revision separately.
 
 ## Benchmark against the original parser
 
@@ -102,19 +119,19 @@ parser-only timings.
 
 | Mode | Threads | Median seconds | Input MiB/s | Peak RSS KiB |
 | --- | ---: | ---: | ---: | ---: |
-| Original JSONL | 1 | 0.0764 | 393.4 | 13,184 |
-| Current legacy JSONL | 1 | 0.0695 | 432.9 | 13,184 |
-| Canonical JSONL | 1 | 1.0915 | 27.5 | 13,184 |
-| Original separate attributes | 1 | 0.2695 | 111.6 | 13,184 |
-| Original JSONL | 4 | 0.0355 | 847.2 | 13,184 |
-| Current legacy JSONL | 4 | 0.0385 | 781.7 | 13,184 |
-| Canonical JSONL | 4 | 0.5271 | 57.0 | 13,184 |
-| Original separate attributes | 4 | 0.1086 | 276.8 | 14,064 |
+| Original JSONL | 1 | 0.0713 | 421.8 | 13,184 |
+| Current legacy JSONL | 1 | 0.0738 | 407.6 | 13,184 |
+| Canonical JSONL | 1 | 1.1575 | 26.0 | 13,184 |
+| Original separate attributes | 1 | 0.2791 | 107.7 | 13,184 |
+| Original JSONL | 4 | 0.0467 | 643.7 | 13,184 |
+| Current legacy JSONL | 4 | 0.0417 | 721.2 | 13,184 |
+| Canonical JSONL | 4 | 0.4520 | 66.5 | 13,184 |
+| Original separate attributes | 4 | 0.1235 | 243.5 | 14,112 |
 
-Canonical output is 213,059,242 bytes versus 53,439,594 bytes for original JSONL
-(3.99×); both contain exactly 62,031 records. Canonical mode emits approximately
-117,683 events/s at four threads on this fixture, with bounded chunk concurrency.
-It is **14.9× slower than original lossy JSONL** at four threads, and 4.9× slower
+Canonical output is 214,610,017 bytes versus 53,439,594 bytes for original JSONL
+(4.02×); both contain exactly 62,031 records. Canonical mode emits approximately
+137,237 events/s at four threads on this fixture, with bounded chunk concurrency.
+It is **9.7× slower than original lossy JSONL** at four threads, and 3.7× slower
 than the original separate-attributes output, which lacks the evidence,
 provenance and compatibility envelope. These are materially different workloads;
 the overhead is a cost, not a throughput improvement. The legacy measurements

@@ -146,7 +146,8 @@ fn render_chunk<P: StoredProgram>(
                     chunk_index,
                     &raw,
                     &mut canonical_data,
-                )?;
+                )
+                .map_err(|err| EvtxError::record(event_record_id, err))?;
                 data.truncate(body_start);
                 data.extend_from_slice(&canonical_data);
             }

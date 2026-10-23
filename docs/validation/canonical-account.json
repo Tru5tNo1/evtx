@@ -1,7 +1,9 @@
 {
+  "schema": "evtx-teg/1.1.0",
   "sample": "new-user-security.evtx",
   "sha256": "6f9fe51d0a5dec63dc68f819e23bc14da5db0b75db4a68dfdf6b39f02868a379",
   "events": 4,
+  "projection_notes_by_field": {},
   "detections": {
     "A": 3,
     "B": 3,

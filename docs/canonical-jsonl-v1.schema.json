@@ -1,58 +1,165 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:evtx-teg:schema:1.0.0",
+  "$id": "urn:evtx-teg:schema:1.1.0",
   "title": "Canonical EVTX TEG/Hayabusa JSONL record v1",
   "type": "object",
-  "required": ["Event", "EventID", "RecordNumber", "Hostname", "SourceName", "@timestamp", "_teg"],
+  "required": [
+    "Event",
+    "EventID",
+    "RecordNumber",
+    "Hostname",
+    "SourceName",
+    "@timestamp",
+    "_teg"
+  ],
   "properties": {
     "Event": {
       "type": "object",
-      "required": ["System"],
+      "required": [
+        "System"
+      ],
       "properties": {
         "System": {
           "type": "object",
-          "required": ["EventID", "TimeCreated_attributes"],
+          "required": [
+            "EventID",
+            "TimeCreated_attributes"
+          ],
           "properties": {
-            "EventID": {"type": "integer", "minimum": 0},
-            "Provider_attributes": {"type": "object"},
+            "EventID": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "Provider_attributes": {
+              "type": "object"
+            },
             "TimeCreated_attributes": {
-              "type": "object", "required": ["SystemTime"],
-              "properties": {"SystemTime": {"type": "string", "format": "date-time"}}
+              "type": "object",
+              "required": [
+                "SystemTime"
+              ],
+              "properties": {
+                "SystemTime": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              }
             }
           }
         }
       }
     },
-    "EventID": {"type": "integer", "minimum": 0},
-    "@timestamp": {"type": "string", "format": "date-time"},
+    "EventID": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "@timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
     "_teg": {
       "type": "object",
-      "required": ["schema", "event_uid", "source", "record", "event_time", "record_header_time", "acquired_at", "ingested_at", "rendered_xml", "projection"],
+      "required": [
+        "schema",
+        "event_uid",
+        "source",
+        "record",
+        "event_time",
+        "record_header_time",
+        "acquired_at",
+        "ingested_at",
+        "rendered_xml",
+        "projection",
+        "projection_conflicts"
+      ],
       "properties": {
-        "schema": {"const": "evtx-teg/1.0.0"},
-        "event_uid": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "schema": {
+          "const": "evtx-teg/1.1.0"
+        },
+        "event_uid": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
         "source": {
-          "type": "object", "required": ["path", "sha256", "size"],
+          "type": "object",
+          "required": [
+            "path",
+            "sha256",
+            "size"
+          ],
           "properties": {
-            "path": {"type": "string"},
-            "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-            "size": {"type": "integer", "minimum": 0}
+            "path": {
+              "type": "string"
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "size": {
+              "type": "integer",
+              "minimum": 0
+            }
           }
         },
         "record": {
-          "type": "object", "required": ["offset", "record_id", "recovered"],
+          "type": "object",
+          "required": [
+            "offset",
+            "record_id",
+            "recovered"
+          ],
           "properties": {
-            "offset": {"type": "integer", "minimum": 4096},
-            "record_id": {"type": "integer", "minimum": 0},
-            "recovered": {"type": "boolean"}
+            "offset": {
+              "type": "integer",
+              "minimum": 4096
+            },
+            "record_id": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "recovered": {
+              "type": "boolean"
+            }
           }
         },
-        "event_time": {"type": "string", "format": "date-time"},
-        "record_header_time": {"type": "string", "format": "date-time"},
-        "acquired_at": {"type": ["string", "null"], "format": "date-time"},
-        "ingested_at": {"type": "string", "format": "date-time"},
-        "rendered_xml": {"type": "string", "minLength": 1},
-        "projection": {"type": "string"}
+        "event_time": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "record_header_time": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "acquired_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "ingested_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "rendered_xml": {
+          "type": "string",
+          "minLength": 1
+        },
+        "projection": {
+          "type": "string"
+        },
+        "projection_conflicts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "field",
+              "selected_source",
+              "other_source",
+              "reason"
+            ]
+          }
+        }
       }
     }
   }

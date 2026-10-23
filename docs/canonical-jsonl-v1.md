@@ -1,4 +1,4 @@
-# Canonical forensic JSONL — `evtx-teg/1.0.0`
+# Canonical forensic JSONL — `evtx-teg/1.1.0`
 
 One UTF-8 JSON object per line, without banners or a JSON array. The same file is
 input to Hayabusa `-J` and the Temporal Evidence Graph. No post-export conversion
@@ -36,7 +36,7 @@ seekable file on disk, as in the original CLI, rather than accumulated in RAM.
 | `_teg` | Forensic metadata; never injected inside Windows `Event` fields |
 
 Absent `EventData` or `UserData` is not fabricated. Empty containers may be null.
-Aliases agree with their structured values. They are redundant members of one
+Aliases follow the precedence policy below. They are redundant members of one
 document: graph consumers should use `Event` and `_teg`, while Hayabusa uses the
 flat members. Consumers must not treat both projections as separate events.
 
@@ -58,9 +58,38 @@ XML export. BinXML type descriptors, template compression and byte layout are
 retained in the original EVTX, identified by hash and offset. Existing parser
 limitations still apply (for example, unsupported BinXML token types fail).
 
-Alias collisions with unequal values, reserved `Event`/`_teg` payload names,
-and Splunk-shaped `result`/`rows` fields that would select the wrong Hayabusa
-importer branch cause a nonzero exit rather than silently overwriting data.
+Starting with 1.1.0, payload/system name collisions do not abort the export.
+The flat compatibility projection follows the pinned Hayabusa 4.2.0 alias table:
+
+* Names resolved through `Event.System` (`EventID`, `Version`, `Channel`,
+  `Computer`, `Keywords`, `Level`, provider/security/execution attribute objects,
+  `Provider_Name`, `SearchFilter`, `ServerName`) select the system value.
+* Unaliased names, notably **`Task`**, select the payload value when present.
+  For example `Event.System.Task = 1` and `Event.EventData.Task = "custom"`
+  produce root `Task = "custom"`, while retaining both structured values.
+* `Hostname`, `SourceName`, `RecordNumber` and `@timestamp` always select the
+  system-derived compatibility values used by the importer.
+* Different same-named fields in both payload containers select `EventData`
+  before `UserData`. Both containers remain intact under `Event`.
+* Reserved payload keys `Event`, `_teg`, object-valued `result` and non-null
+  `rows` are omitted only from root aliases, preventing accidental selection of
+  the Splunk importer. The payload remains under its original `Event` container.
+* Unnamed `Data.#text` strings are concatenated without a separator in root
+  `Data`, matching the pinned native Hayabusa EVTX renderer. The structured
+  `Event.EventData.Data.#text` values and XML evidence retain the original items,
+  empties and ordering. This normalization is also recorded in the metadata.
+
+Every unequal or reserved-key collision is recorded in
+`_teg.projection_conflicts`, with `field`, `selected_source`, `other_source` and
+`reason`. It is an empty array for records without collisions. This is an
+explicit detection projection, not a destructive merge of the event. Graph
+consumers use the original `Event` paths and evidence, not ambiguous root aliases.
+The policy is pinned to the standard alias configuration; custom alias tables
+or explicit paths requiring both colliding values need separate validation.
+Version 1.0.0 rejected such records; 1.1.0 accepts them with this documented
+projection and additional metadata. Existing event UIDs do not change.
+
+Parser/serialization failures still return nonzero.
 An error can leave partial output; treat an export as valid only after exit 0.
 The original evidence is never rewritten. Unknown names colliding with generated
 `*_attributes` names remain recoverable from `_teg.rendered_xml`.

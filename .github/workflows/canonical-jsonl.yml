@@ -46,6 +46,7 @@ jobs:
           python3 -m pip install --disable-pip-version-check jsonschema==4.25.1
           python3 scripts/validate_hayabusa.py --hayabusa ../tools/hayabusa --output "$RUNNER_TEMP/canonical/account"
           python3 scripts/validate_hayabusa.py --hayabusa ../tools/hayabusa --sample samples/system.evtx --output "$RUNNER_TEMP/canonical/system"
+          python3 scripts/validate_hayabusa.py --hayabusa ../tools/hayabusa --sample samples/Application.evtx --output "$RUNNER_TEMP/canonical/application"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

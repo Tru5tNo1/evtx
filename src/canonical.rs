@@ -2,7 +2,6 @@
 use crate::err::{Result, SerializationError};
 use crate::evtx_chunk::RawRecord;
 use sha2::{Digest, Sha256};
-#[cfg(test)]
 use sonic_rs::json;
 use sonic_rs::{JsonContainerTrait, JsonValueMutTrait, JsonValueTrait, Object, Value};
 use std::io::{Read, Seek, SeekFrom};
@@ -99,6 +98,94 @@ fn insert_alias(root: &mut Object, key: &str, value: Value) -> Result<()> {
         root.insert(key, value);
     }
     Ok(())
+}
+
+// Pinned Hayabusa 4.2.0 eventkey_alias.txt resolves these through System.
+// Unaliased names (notably Task) resolve through EventData instead.
+fn system_alias(name: &str) -> bool {
+    matches!(
+        name,
+        "Channel"
+            | "Computer"
+            | "EventID"
+            | "Execution_attributes"
+            | "Keywords"
+            | "Level"
+            | "Provider_attributes"
+            | "Provider_Name"
+            | "SearchFilter"
+            | "Security_attributes"
+            | "ServerName"
+            | "Version"
+            | "Hostname"
+            | "SourceName"
+            | "RecordNumber"
+            | "@timestamp"
+    )
+}
+
+fn project_field(
+    root: &mut Object,
+    origins: &mut std::collections::BTreeMap<String, String>,
+    conflicts: &mut Vec<Value>,
+    key: &str,
+    value: Value,
+    source: &str,
+) {
+    if source != "System"
+        && (matches!(key, "Event" | "_teg")
+            || (key == "result" && value.is_object())
+            || (key == "rows" && !value.is_null()))
+    {
+        conflicts.push(json!({"field":key,"selected_source":"envelope",
+            "other_source":source,"reason":"reserved importer/envelope key; payload retained in Event"}));
+        return;
+    }
+    if let Some(old) = root.get(&key) {
+        if old == &value {
+            return;
+        }
+        let previous = origins.get(key).map(String::as_str).unwrap_or("envelope");
+        let choose_system = source == "System" && system_alias(key);
+        conflicts.push(json!({"field":key,
+            "selected_source":if choose_system { source } else { previous },
+            "other_source":if choose_system { previous } else { source },
+            "reason":"Hayabusa 4.2.0 alias precedence; both values retained in Event"}));
+        if !choose_system {
+            return;
+        }
+    }
+    root.insert(key, value);
+    origins.insert(key.into(), source.into());
+}
+
+/// Hayabusa's native EVTX renderer appends consecutive unnamed Data text into
+/// one scalar. Its JSON importer does not perform that normalization itself.
+fn payload_alias(key: &str, value: &Value, source: &str, conflicts: &mut Vec<Value>) -> Value {
+    if key == "Data"
+        && let Some(object) = value.as_object()
+        && object.len() == 1
+        && let Some(text) = object.get(&"#text")
+    {
+        let scalar = if text.is_str() {
+            Some(text.clone())
+        } else if let Some(values) = text.as_array() {
+            values
+                .iter()
+                .map(Value::as_str)
+                .collect::<Option<Vec<_>>>()
+                .map(|parts| Value::from(&parts.concat()))
+        } else {
+            None
+        };
+        if let Some(scalar) = scalar {
+            conflicts.push(json!({"field":key,"selected_source":source,
+                "other_source":format!("{source}.Data.#text"),
+                "reason":"unnamed Data text concatenated for native Hayabusa parity; original values retained in Event"}));
+            return scalar;
+        }
+    }
+    value.clone()
 }
 
 /// Common Windows records need no owning DOM. Normalize the small System object,
@@ -287,7 +374,16 @@ fn try_write_flat_record(
             raw_member(out, &mut root_first, name, text).ok()?;
         }
     }
-    append_metadata(out, xml, source, chunk_index, raw, event_time.as_str()?).ok()?;
+    append_metadata(
+        out,
+        xml,
+        source,
+        chunk_index,
+        raw,
+        event_time.as_str()?,
+        &[],
+    )
+    .ok()?;
     out.push(b'}');
     Some(true)
 }
@@ -310,6 +406,7 @@ fn append_metadata(
     chunk_index: u64,
     raw: &RawRecord<'_>,
     event_time: &str,
+    conflicts: &[Value],
 ) -> Result<()> {
     let offset = 4096 + chunk_index * 65536 + raw.binxml_offset - 24;
     let mut identity = Sha256::new();
@@ -317,7 +414,7 @@ fn append_metadata(
     identity.update(source.sha256.as_bytes());
     identity.update(offset.to_le_bytes());
     let xml = std::str::from_utf8(xml).map_err(|_| invalid("Invalid UTF-8 XML evidence"))?;
-    out.extend_from_slice(b",\"_teg\":{\"schema\":\"evtx-teg/1.0.0\",\"event_uid\":");
+    out.extend_from_slice(b",\"_teg\":{\"schema\":\"evtx-teg/1.1.0\",\"event_uid\":");
     let write = |out: &mut Vec<u8>, value: &str| {
         sonic_rs::to_writer(out, value).map_err(|e| invalid(e.to_string()))
     };
@@ -342,6 +439,8 @@ fn append_metadata(
     write(out, &source.ingested_at)?;
     out.extend_from_slice(b",\"rendered_xml\":");
     write(out, xml)?;
+    out.extend_from_slice(b",\"projection_conflicts\":");
+    sonic_rs::to_writer(&mut *out, conflicts).map_err(|e| invalid(e.to_string()))?;
     out.extend_from_slice(b",\"projection\":\"hayabusa-flat-v1; rendered_xml preserves repeated, unnamed and attributed elements\"}");
     Ok(())
 }
@@ -395,21 +494,32 @@ fn write_record_owned(
         .parse::<crate::Timestamp>()
         .map_err(|_| invalid("Invalid SystemTime"))?;
     let mut root = Object::new();
+    let mut origins = std::collections::BTreeMap::new();
+    let mut conflicts = Vec::new();
     for container in ["EventData", "UserData"] {
         if let Some(fields) = event.get(&container).and_then(Value::as_object) {
             for (key, val) in fields {
-                // These names select Splunk importer branches, making a flat event ambiguous.
-                if (key == "result" && val.is_object()) || (key == "rows" && !val.is_null()) {
-                    return Err(invalid(format!(
-                        "Hayabusa reserves EventData.{key} for Splunk input"
-                    )));
-                }
-                insert_alias(&mut root, key, val.clone())?;
+                let alias = payload_alias(key, val, container, &mut conflicts);
+                project_field(
+                    &mut root,
+                    &mut origins,
+                    &mut conflicts,
+                    key,
+                    alias,
+                    container,
+                );
             }
         }
     }
     for (key, val) in system {
-        insert_alias(&mut root, key, val.clone())?;
+        project_field(
+            &mut root,
+            &mut origins,
+            &mut conflicts,
+            key,
+            val.clone(),
+            "System",
+        );
     }
     for (key, val) in [
         (
@@ -436,7 +546,7 @@ fn write_record_owned(
         ),
         ("@timestamp", Value::from(event_time)),
     ] {
-        insert_alias(&mut root, key, val)?;
+        project_field(&mut root, &mut origins, &mut conflicts, key, val, "System");
     }
     let event_time = event_time.to_owned();
     insert_alias(&mut root, "Event", event_value)?;
@@ -445,7 +555,15 @@ fn write_record_owned(
     }
     sonic_rs::to_writer(&mut *out, &root).map_err(|e| invalid(e.to_string()))?;
     out.pop();
-    append_metadata(out, rendered_xml, source, chunk_index, raw, &event_time)?;
+    append_metadata(
+        out,
+        rendered_xml,
+        source,
+        chunk_index,
+        raw,
+        &event_time,
+        &conflicts,
+    )?;
     out.push(b'}');
     Ok(())
 }
@@ -499,10 +617,49 @@ mod tests {
     }
 
     #[test]
-    fn alias_collisions_fail_instead_of_silently_overwriting() {
-        let mut root = Object::new();
-        insert_alias(&mut root, "EventID", json!(42)).unwrap();
-        assert!(insert_alias(&mut root, "EventID", json!(43)).is_err());
+    fn task_payload_wins_and_system_aliases_win_without_losing_either_value() {
+        let source = CanonicalSource {
+            path: "Application.evtx".into(),
+            sha256: "a".repeat(64),
+            size: 69632,
+            ingested_at: "2026-10-23T00:00:00Z".into(),
+            acquired_at: None,
+        };
+        let raw = RawRecord {
+            event_record_id: 7,
+            timestamp: "2020-01-01T00:00:00Z".parse().unwrap(),
+            binxml_offset: 536,
+            bytes: &[],
+            recovered: false,
+        };
+        let input = br##"{"Event":{"System":{"EventID":4720,"Task":1,"Version":1,"TimeCreated":{"#attributes":{"SystemTime":"2020-01-01T00:00:00Z"}}},"EventData":{"Task":"payload-task","Version":"3,3,1,0","EventID":"3036","Data":{"#text":["a","","b"]}}}}"##;
+        let mut out = Vec::new();
+        write_record(input, b"<Event/>", &source, 0, &raw, &mut out).unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&out).unwrap();
+        assert_eq!(v["Task"], "payload-task");
+        assert_eq!(v["Event"]["System"]["Task"], 1);
+        assert_eq!(v["Event"]["EventData"]["Task"], "payload-task");
+        assert_eq!(v["Version"], 1);
+        assert_eq!(v["EventID"], 4720);
+        assert_eq!(v["Event"]["EventData"]["Version"], "3,3,1,0");
+        assert_eq!(v["Event"]["EventData"]["EventID"], "3036");
+        assert_eq!(v["Data"], "ab");
+        assert_eq!(
+            v["Event"]["EventData"]["Data"]["#text"],
+            serde_json::json!(["a", "", "b"])
+        );
+        let conflicts = v["_teg"]["projection_conflicts"].as_array().unwrap();
+        assert_eq!(conflicts.len(), 4);
+        assert!(
+            conflicts
+                .iter()
+                .any(|c| c["field"] == "Task" && c["selected_source"] == "EventData")
+        );
+        assert!(
+            conflicts
+                .iter()
+                .any(|c| c["field"] == "EventID" && c["selected_source"] == "System")
+        );
     }
 
     #[test]
