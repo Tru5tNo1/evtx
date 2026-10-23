@@ -58,6 +58,10 @@ pub enum EvtxOutputFormat {
 
 struct EvtxDump {
     parser_settings: ParserSettings,
+    canonical: bool,
+    source_path: String,
+    ingested_at: evtx::Timestamp,
+    acquired_at: Option<evtx::Timestamp>,
     input: PathBuf,
     show_record_number: bool,
     output_format: EvtxOutputFormat,
@@ -70,11 +74,47 @@ struct EvtxDump {
 
 impl EvtxDump {
     pub fn from_cli_matches(matches: &ArgMatches) -> Result<Self> {
-        let input = PathBuf::from(
+        Self::from_input(matches, None, None, None)
+    }
+
+    fn from_input(
+        matches: &ArgMatches,
+        input_override: Option<&Path>,
+        output_override: Option<&Path>,
+        relative_source: Option<&Path>,
+    ) -> Result<Self> {
+        let input = input_override.map(Path::to_path_buf).unwrap_or_else(|| {
+            PathBuf::from(
+                matches
+                    .get_one::<String>("INPUT")
+                    .expect("This is a required argument"),
+            )
+        });
+        let canonical = matches.get_flag("canonical");
+        if canonical
+            && matches
+                .get_one::<String>("output-format")
+                .map(String::as_str)
+                != Some("jsonl")
+        {
+            bail!("--canonical requires -o jsonl");
+        }
+        let timestamp = |name: &str| -> Result<Option<evtx::Timestamp>> {
             matches
-                .get_one::<String>("INPUT")
-                .expect("This is a required argument"),
-        );
+                .get_one::<String>(name)
+                .map(|t| {
+                    t.parse()
+                        .with_context(|| format!("Invalid --{name} timestamp"))
+                })
+                .transpose()
+        };
+        let ingested_at = timestamp("ingested-at")?.unwrap_or_else(evtx::Timestamp::now);
+        let acquired_at = timestamp("acquired-at")?;
+        let source_path = relative_source
+            .unwrap_or(&input)
+            .to_str()
+            .context("Source path must be UTF-8")?
+            .replace('\\', "/");
 
         let output_format = match matches
             .get_one::<String>("output-format")
@@ -124,12 +164,37 @@ impl EvtxDump {
             .get_one::<AnsiCodec>("ansi-codec")
             .expect("has default");
 
-        let output: Box<dyn Write> = if let Some(path) = matches.get_one::<String>("output-target")
-        {
+        let output_path = output_override.map(Path::to_path_buf).or_else(|| {
+            matches
+                .get_one::<String>("output-target")
+                .map(PathBuf::from)
+        });
+        if let Some(path) = &output_path {
+            if path.exists()
+                && !Self::is_stdin_input(&input)
+                && fs::canonicalize(path)? == fs::canonicalize(&input)?
+            {
+                bail!("Output must not overwrite the source EVTX");
+            }
+            // A hard link to the source must be rejected too.
+            #[cfg(unix)]
+            if path.exists() && !Self::is_stdin_input(&input) {
+                use std::os::unix::fs::MetadataExt;
+                let a = fs::metadata(path)?;
+                let b = fs::metadata(&input)?;
+                if a.dev() == b.dev() && a.ino() == b.ino() {
+                    bail!("Output is a hard link to source EVTX");
+                }
+            }
+        }
+        let output: Box<dyn Write> = if let Some(path) = output_path {
             Box::new(BufWriter::new(
-                Self::create_output_file(path, !matches.get_flag("no-confirm-overwrite"))
+                Self::create_output_file(&path, !matches.get_flag("no-confirm-overwrite"))
                     .with_context(|| {
-                        format!("An error occurred while creating output file at `{}`", path)
+                        format!(
+                            "An error occurred while creating output file at `{}`",
+                            path.display()
+                        )
                     })?,
             ))
         } else {
@@ -152,6 +217,10 @@ impl EvtxDump {
 
         Ok(EvtxDump {
             parser_settings,
+            canonical,
+            source_path,
+            ingested_at,
+            acquired_at,
             input,
             show_record_number: !no_show_record_number,
             output_format,
@@ -168,9 +237,26 @@ impl EvtxDump {
             eprintln!("{:?}", err);
         }
 
-        let mut parser = self
-            .open_parser()
-            .map(|parser| parser.with_configuration(self.parser_settings.clone()))?;
+        let mut file = self.open_input()?;
+        let source = if self.canonical {
+            Some(evtx::canonical::CanonicalSource::from_reader(
+                &mut file,
+                self.source_path.clone(),
+                self.ingested_at,
+                self.acquired_at,
+            )?)
+        } else {
+            None
+        };
+        let mut parser =
+            EvtxParser::from_read_seek(file)?.with_configuration(self.parser_settings.clone());
+        if let Some(source) = source {
+            for chunk in parser.chunks_canonical_json_bytes(source) {
+                self.dump_chunk(chunk)?;
+            }
+            self.output.flush()?;
+            return Ok(());
+        }
 
         match self.output_format {
             EvtxOutputFormat::XML => {
@@ -185,10 +271,11 @@ impl EvtxDump {
             }
         };
 
+        self.output.flush()?;
         Ok(())
     }
 
-    fn open_parser(&self) -> Result<EvtxParser<File>> {
+    fn open_input(&self) -> Result<File> {
         if Self::is_stdin_input(&self.input) {
             let mut tmp =
                 tempfile().context("Failed to create temporary file for stdin buffering")?;
@@ -204,9 +291,9 @@ impl EvtxDump {
             tmp.seek(SeekFrom::Start(0))
                 .context("Failed to rewind stdin buffer")?;
 
-            EvtxParser::from_read_seek(tmp).context("Failed to parse EVTX data from stdin")
+            Ok(tmp)
         } else {
-            EvtxParser::from_path(&self.input)
+            File::open(&self.input)
                 .with_context(|| format!("Failed to open evtx file at: {}", &self.input.display()))
         }
     }
@@ -308,7 +395,7 @@ impl EvtxDump {
                         anyhow::Error::from(e).context("Failed to dump the next record.")
                     );
 
-                    if self.stop_after_error {
+                    if self.stop_after_error || self.canonical {
                         bail!("Stopped after error");
                     }
                 }
@@ -413,6 +500,39 @@ fn test_parse_ansi_codec() {
     assert!(parse_ansi_codec("no-such-encoding").is_err());
 }
 
+fn export_directory(matches: &ArgMatches, root: &Path, dir: &Path, output: &Path) -> Result<()> {
+    let mut entries = fs::read_dir(dir)?.collect::<std::io::Result<Vec<_>>>()?;
+    entries.sort_by_key(|entry| entry.file_name());
+    for entry in entries {
+        let kind = entry.file_type()?;
+        let path = entry.path();
+        if kind.is_symlink() {
+            bail!(
+                "Symlinks in evidence trees require explicit resolution: {}",
+                path.display()
+            );
+        }
+        if kind.is_dir() {
+            export_directory(matches, root, &path, output)?;
+        } else if path
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("evtx"))
+        {
+            let relative = path.strip_prefix(root)?;
+            let mut target = output.join(relative).into_os_string();
+            target.push(".jsonl");
+            EvtxDump::from_input(
+                matches,
+                Some(&path),
+                Some(Path::new(&target)),
+                Some(relative),
+            )?
+            .run()?;
+        }
+    }
+    Ok(())
+}
+
 fn main() -> Result<()> {
     let cmd = Command::new("EVTX Parser")
         .version(env!("CARGO_PKG_VERSION"))
@@ -423,6 +543,13 @@ fn main() -> Result<()> {
                 .required(false)
                 .help("Input EVTX file path, or '-' to read from stdin. Required unless using a subcommand."),
         )
+        .arg(Arg::new("canonical").long("canonical").action(ArgAction::SetTrue)
+            .conflicts_with("separate-json-attributes")
+            .help("Emit canonical TEG/Hayabusa JSONL v1 (requires -o jsonl); directories mirror their tree under -f"))
+        .arg(Arg::new("ingested-at").long("ingested-at").requires("canonical")
+            .help("RFC3339 ingestion/export timestamp (default: now)"))
+        .arg(Arg::new("acquired-at").long("acquired-at").requires("canonical")
+            .help("Known RFC3339 evidence acquisition timestamp (default: null)"))
         .arg(
             Arg::new("num-threads")
                 .short('t')
@@ -551,7 +678,34 @@ fn main() -> Result<()> {
         bail!("Missing INPUT. Provide an EVTX file path, or use a subcommand (try `--help`).");
     }
 
-    EvtxDump::from_cli_matches(&matches)?.run()?;
+    let input = PathBuf::from(matches.get_one::<String>("INPUT").unwrap());
+    if input.is_dir() {
+        if !matches.get_flag("canonical") {
+            bail!("Directory input requires --canonical -o jsonl");
+        }
+        let output = PathBuf::from(
+            matches
+                .get_one::<String>("output-target")
+                .context("Directory input requires --output DIR")?,
+        );
+        // Resolve before creating outputs; reject nesting to prevent exporting into the evidence tree.
+        let input_real = fs::canonicalize(&input)?;
+        let output_absolute = if output.is_absolute() {
+            output.clone()
+        } else {
+            std::env::current_dir()?.join(&output)
+        };
+        let mut ancestor = output_absolute.as_path();
+        while !ancestor.exists() {
+            ancestor = ancestor.parent().context("Invalid output path")?;
+        }
+        if fs::canonicalize(ancestor)?.starts_with(&input_real) {
+            bail!("Output directory must be outside input tree");
+        }
+        export_directory(&matches, &input, &input, &output)?;
+    } else {
+        EvtxDump::from_cli_matches(&matches)?.run()?;
+    }
 
     Ok(())
 }

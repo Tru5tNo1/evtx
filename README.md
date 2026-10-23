@@ -89,6 +89,14 @@ Some examples
 
 To force single threaded usage (which will also ensure order), `-t 1` can be passed.
 
+For a single forensic JSONL format shared by Hayabusa `-J` and a Temporal
+Evidence Graph, use `evtx_dump --canonical -o jsonl <input.evtx>`. Directory input
+with `-f <output-directory>` preserves machine subdirectories. This mode includes
+the structured Windows event, Hayabusa's required flat aliases, and `_teg`
+provenance with stable event IDs and XML evidence. See the
+[versioned schema and importer limitations](docs/canonical-jsonl-v1.md) and
+[A/B validation and benchmarks](docs/canonical-jsonl-validation.md).
+
 ## Offline template rendering (WEVT_TEMPLATE)
 
 EVTX records can reference template definitions stored in provider binaries (EXE/DLL/SYS). `evtx_dump` can extract those templates into an offline cache and use them at render time.

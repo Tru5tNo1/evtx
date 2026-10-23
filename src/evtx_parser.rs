@@ -1,7 +1,7 @@
 use crate::err::{ChunkError, EvtxError, InputError, Result};
 
 use crate::AnsiCodec;
-use crate::binxml::compiled::{JsonProgram, StoredProgram, XmlProgram};
+use crate::binxml::compiled::{JsonProgram, StoredProgram, TemplateProgram, XmlProgram};
 use crate::evtx_chunk::{EvtxChunk, EvtxChunkData};
 use crate::evtx_file_header::EvtxFileHeader;
 use crate::evtx_record::SerializedEvtxRecord;
@@ -65,6 +65,7 @@ pub struct RenderedChunk {
 fn render_chunk<P: StoredProgram>(
     chunk: &mut EvtxChunk<'_>,
     record_numbers: bool,
+    canonical: Option<(&crate::canonical::CanonicalSource, u64)>,
 ) -> RenderedChunk {
     use crate::binxml::compiled::{Preflight, ProgramCache, try_render_compiled};
     use crate::binxml::ir::{IrTemplateCache, build_tree_from_binxml_bytes_direct};
@@ -79,6 +80,10 @@ fn render_chunk<P: StoredProgram>(
     let mut progs = ProgramCache::<P>::default();
     let mut preflight = Preflight::default();
     let mut value_renderer = ValueRenderer::new();
+    let mut xml_progs = ProgramCache::<XmlProgram>::default();
+    let mut xml_preflight = Preflight::default();
+    let mut xml_data = Vec::new();
+    let mut canonical_data = Vec::new();
 
     let mut raw_records = chunk_ref.iter_raw();
     while let Some(raw) = raw_records.next() {
@@ -118,9 +123,38 @@ fn render_chunk<P: StoredProgram>(
                 .and_then(|tree| P::render_tree(&tree, settings, &mut data))
                 .map_err(|err| EvtxError::record(event_record_id, err))
         };
+        let rendered = rendered.and_then(|()| {
+            if let Some((source, chunk_index)) = canonical {
+                xml_data.clear();
+                if !try_render_compiled(
+                    raw.bytes,
+                    chunk_ref,
+                    &mut ir_cache,
+                    &mut xml_progs,
+                    &mut xml_preflight,
+                    &mut value_renderer,
+                    &mut xml_data,
+                ) {
+                    build_tree_from_binxml_bytes_direct(raw.bytes, chunk_ref, &mut ir_cache)
+                        .and_then(|tree| XmlProgram::render_tree(&tree, settings, &mut xml_data))?;
+                }
+                canonical_data.clear();
+                crate::canonical::write_record(
+                    &data[body_start..],
+                    &xml_data,
+                    source,
+                    chunk_index,
+                    &raw,
+                    &mut canonical_data,
+                )?;
+                data.truncate(body_start);
+                data.extend_from_slice(&canonical_data);
+            }
+            Ok(())
+        });
         match rendered {
             Ok(()) => {
-                if raw.recovered {
+                if raw.recovered && canonical.is_none() {
                     P::mark_recovered(&mut data, body_start);
                 }
                 data.push(b'\n');
@@ -131,7 +165,7 @@ fn render_chunk<P: StoredProgram>(
             }
             Err(err) => {
                 data.truncate(record_start);
-                if raw.recovered {
+                if raw.recovered && canonical.is_none() {
                     debug!("Skipping carved record {event_record_id}: {err:?}");
                     raw_records.rescan_after(&raw);
                 } else {
@@ -577,7 +611,7 @@ impl<T: ReadSeek> EvtxParser<T> {
     fn chunk_pipeline<'a, P: Send + 'static>(
         &'a mut self,
         on_err: impl Fn(EvtxError) -> P + Send + Sync + Clone + 'static,
-        f: impl Fn(&mut EvtxChunk<'_>) -> P + Send + Sync + Clone + 'static,
+        f: impl Fn(&mut EvtxChunk<'_>, u64) -> P + Send + Sync + Clone + 'static,
     ) -> impl Iterator<Item = P> + 'a {
         // Retrieve parser settings here, while `self` is immutably borrowed.
         let num_threads = max(self.config.num_threads, 1);
@@ -606,7 +640,7 @@ impl<T: ReadSeek> EvtxParser<T> {
                     arena: Bump::new(),
                 },
                 Ok(mut chunk) => ChunkBatch {
-                    payload: f(&mut chunk),
+                    payload: f(&mut chunk, chunk_id),
                     arena: chunk.arena,
                 },
             }
@@ -615,7 +649,12 @@ impl<T: ReadSeek> EvtxParser<T> {
         let max_in_flight = num_threads * 2;
 
         // `self` is mutably borrowed from here on.
-        let mut chunks = self.chunks();
+        let mut current_chunk = 0;
+        let mut chunks = std::iter::from_fn(move || {
+            let (chunk, index) = self.find_next_chunk(current_chunk)?;
+            current_chunk = index.checked_add(1)?;
+            Some((chunk, index))
+        });
         // Arenas are created on first use and recycled, so the pool grows to
         // exactly what is in flight (one when single-threaded).
         let mut arena_pool: Vec<Bump> = Vec::new();
@@ -637,9 +676,9 @@ impl<T: ReadSeek> EvtxParser<T> {
             if num_threads == 1 {
                 // Single-threaded: process inline; a cross-thread round-trip per
                 // chunk costs ~3% wall time for no benefit.
-                let chunk_res = chunks.next()?;
+                let (chunk_res, chunk_index) = chunks.next()?;
                 let arena = arena_pool.pop().unwrap_or_else(new_arena);
-                let batch = work(chunk_res, next_seq, arena);
+                let batch = work(chunk_res, chunk_index, arena);
                 next_seq += 1;
                 arena_pool.push(batch.arena);
                 return Some(batch.payload);
@@ -651,7 +690,7 @@ impl<T: ReadSeek> EvtxParser<T> {
                 // Keep the pipeline full. Chunk allocation (I/O) stays on the
                 // consumer thread; parsing + serialization go to the rayon pool.
                 while !exhausted && in_flight < max_in_flight {
-                    let Some(chunk_res) = chunks.next() else {
+                    let Some((chunk_res, chunk_index)) = chunks.next() else {
                         exhausted = true;
                         break;
                     };
@@ -663,7 +702,7 @@ impl<T: ReadSeek> EvtxParser<T> {
                     let work = work.clone();
                     spawn(move || {
                         let batch = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                            work(chunk_res, seq, arena)
+                            work(chunk_res, chunk_index, arena)
                         }));
                         // The receiver may be gone if the iterator was dropped.
                         let _ = tx.send((seq, batch));
@@ -703,7 +742,7 @@ impl<T: ReadSeek> EvtxParser<T> {
     ) -> impl Iterator<Item = Result<U>> + 'a {
         self.chunk_pipeline(
             |err| vec![Err(err)],
-            move |chunk| {
+            move |chunk, _chunk_index| {
                 let mut f = f.clone();
                 chunk
                     .iter()
@@ -747,13 +786,29 @@ impl<T: ReadSeek> EvtxParser<T> {
             data: Vec::new(),
             items: vec![RenderedChunkItem::Failed(err)],
         };
-        self.chunk_pipeline(failed, move |chunk| {
+        self.chunk_pipeline(failed, move |chunk, _chunk_index| {
             if json {
-                render_chunk::<JsonProgram>(chunk, record_numbers)
+                render_chunk::<JsonProgram>(chunk, record_numbers, None)
             } else {
-                render_chunk::<XmlProgram>(chunk, record_numbers)
+                render_chunk::<XmlProgram>(chunk, record_numbers, None)
             }
         })
+    }
+
+    /// Stream canonical TEG/Hayabusa JSONL, using the compiled JSON and XML programs
+    /// inside the existing bounded parallel chunk pipeline. Output has no banners.
+    /// Use compact, non-separated settings; the CLI enforces this configuration.
+    pub fn chunks_canonical_json_bytes(
+        &mut self,
+        source: crate::canonical::CanonicalSource,
+    ) -> impl Iterator<Item = RenderedChunk> + '_ {
+        self.chunk_pipeline(
+            |err| RenderedChunk {
+                data: Vec::new(),
+                items: vec![RenderedChunkItem::Failed(err)],
+            },
+            move |chunk, index| render_chunk::<JsonProgram>(chunk, false, Some((&source, index))),
+        )
     }
 
     /// Return an iterator over all the records.

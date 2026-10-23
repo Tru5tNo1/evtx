@@ -1,0 +1,27 @@
+{
+  "sample": "system.evtx",
+  "sha256": "60e5fd8f10a3deecd58bd7bee2e03b1308d190fd13b52908be9d576c7f5d6623",
+  "events": 1881,
+  "detections": {
+    "A": 138,
+    "B": 138,
+    "metadata-control": 138
+  },
+  "unique_rules": 13,
+  "compared_fields": [
+    "RuleID",
+    "RecordID",
+    "Timestamp",
+    "Level",
+    "Computer",
+    "Channel",
+    "EventID"
+  ],
+  "equivalent": true,
+  "hayabusa_commit": "a5f0e010893a8c388e693019e3fbb8f374a9f9c0",
+  "rules_commit": "e9a98d49313eed67fe1a2c21c0b108e04fdebe66",
+  "expected_differences": [
+    "EvtxFile names the JSONL input in B; _teg.source retains EVTX provenance",
+    "ExtraFieldInfo contains the canonical fields and metadata in B"
+  ]
+}
