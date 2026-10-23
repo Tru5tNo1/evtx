@@ -87,6 +87,61 @@ requires per-file coverage and per-event comparison using identical versions,
 rules and filters. An export that stopped on error may be incomplete. No claim
 of corpus-wide equivalence or of a confirmed ScriptBlock parsing defect is made.
 
+### User-reported 4104-only comparison
+
+Using the same verbose CSV profile, ISO timestamps and unabridged fields on both
+paths, with native `-A -a`, the user reports 3,737 native versus 2,827 canonical
+`Potentially Malicious PwSh` detections. This is a net difference of 910 hits
+(24.35% of the native count). These summaries confirm a discrepancy within 4104;
+they do not identify individual missing events or its cause. Export completion,
+source coverage and the user's exact rule revision remain unverified.
+
+The [pinned rule](https://github.com/Yamato-Security/hayabusa-rules/blob/e9a98d49313eed67fe1a2c21c0b108e04fdebe66/hayabusa/builtin/PowerShell_Op/PwSh_4104_Med_ScriptblockLog_PotentiallyMalicious.yml)
+`73be1519-4648-4ed7-b305-605504afc242` checks **only** Channel, EventID 4104 and
+numeric Windows `Event.System.Level = 3`. It does not inspect `ScriptBlockText`.
+Consequently a changed script string alone cannot explain those missing hits;
+absent/skipped records or changed system fields are among the conditions to check.
+The CSV's `Level = medium` is rule severity, not this Windows event level.
+
+[`scripts/Compare-Hayabusa.ps1`](../scripts/Compare-Hayabusa.ps1) diagnoses existing
+`evtx.csv` and `jsonl.csv` without rerunning detection or changing the exports.
+It works with Windows PowerShell 5.1 and PowerShell 7. From the parser checkout:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Compare-Hayabusa.ps1 `
+  -ComparisonDirectory "$env:USERPROFILE\Desktop\AB_4104_20261023_181654" `
+  -EvtxRoot "$env:USERPROFILE\Desktop\logs" `
+  -JsonlRoot "$env:USERPROFILE\Desktop\export_v11"
+```
+
+The default rule filter is the Rule ID above; `-RuleId ''` compares all rules in
+the input CSVs. Identity includes relative source path, RuleID, RecordID, instant,
+severity, computer, channel and EventID, with multiplicity. Source directories
+must correspond to those recorded in the CSVs; basename-only matching is refused.
+Timestamp normalization retains 100 ns precision and handles equivalent offsets.
+The tool streams the CSVs, discards Details/ExtraFieldInfo and retains only the
+selected detection identities. Memory scales with unique selected detections,
+not with all event bodies; this diagnostic is separate from the Rust export path.
+
+Each run writes a new `audit_*` subdirectory containing:
+
+* `summary.json`: selected native/JSON counts, missing/extra multiplicities and parity.
+* `missing.csv` / `extra.csv`: identities with unequal counts in each direction.
+* `presence.csv`: up to ten missing source events (`-Inspect` changes this limit).
+
+Presence inspection streams only the corresponding canonical files, locating
+records by root or structured record ID. It distinguishes missing/empty files,
+absent records, invalid JSON and multiple matches. For present records it reports
+schema/UID, projected and structured Windows levels, the three rule conditions,
+event time, and whether `_teg.source.sha256` still matches the original EVTX.
+On Windows, the read-only `Get-WinEvent` API also checks the original event's
+level/channel/ID; unsupported readers, errors and ambiguous IDs are explicit.
+An absent record or mismatched source hash is not certified as a successful export.
+Neither matching summaries nor checking ten examples proves full equivalence.
+The script's synthetic regression tests exercise multiplicity, timestamp offsets,
+changed levels, absent/empty/invalid exports, source hash differences and zero
+JSON detections; CI runs them in Windows PowerShell 5.1.
+
 ## Projection and evidence regressions
 
 Schema 1.1.0 regression coverage includes the real Application records with

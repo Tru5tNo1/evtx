@@ -9,9 +9,17 @@ on:
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'scripts/validate_hayabusa.py'
+      - 'scripts/*Hayabusa*.ps1'
       - '.github/workflows/canonical-jsonl.yml'
 
 jobs:
+  windows-audit:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Verify comparison diagnostics in Windows PowerShell 5.1
+        shell: powershell
+        run: .\scripts\Test-HayabusaComparison.ps1
   detections:
     runs-on: ubuntu-latest
     steps:
