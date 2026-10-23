@@ -84,6 +84,25 @@ try {
     $zero = (& $tool -ComparisonDirectory $empty -EvtxRoot $source -JsonlRoot $canonical -Inspect 1) | ConvertFrom-Json
     Assert-Equal $zero.MissingDetections 9 'Zero detections missing count'
     Assert-Equal $zero.Equivalent $false 'Zero detections failure'
+
+    # Header triage reads originals without modifying them and includes uppercase extensions.
+    $headers = Join-Path $testRoot 'headers'
+    $null = New-Item -ItemType Directory -Path $headers
+    $goodHeader = New-Object byte[] 4096
+    [Text.Encoding]::ASCII.GetBytes("ElfFile`0").CopyTo($goodHeader, 0)
+    [IO.File]::WriteAllBytes((Join-Path $headers 'good.evtx'), $goodHeader)
+    $badHeader = New-Object byte[] 4096
+    [byte[]]$badMagic = @(0, 0x10, 0, 0, 0x70, 2, 0, 0)
+    $badMagic.CopyTo($badHeader, 0)
+    [IO.File]::WriteAllBytes((Join-Path $headers 'bad.EVTX'), $badHeader)
+    [IO.File]::WriteAllBytes((Join-Path $headers 'short.evtx'), [byte[]]@(69, 108))
+    [IO.File]::WriteAllBytes((Join-Path $headers 'empty.evtx'), [byte[]]@())
+    $beforeHeader = (Get-FileHash -LiteralPath (Join-Path $headers 'bad.EVTX')).Hash
+    $triage = @(& (Join-Path $PSScriptRoot 'Find-InvalidEvtxHeader.ps1') -Root $headers)
+    Assert-Equal $triage.Count 3 'Invalid header count'
+    $bad = $triage | Where-Object { $_.Issue -eq 'invalid_magic' }
+    Assert-Equal $bad.HeaderHex '00-10-00-00-70-02-00-00' 'Reported magic bytes'
+    Assert-Equal (Get-FileHash -LiteralPath (Join-Path $headers 'bad.EVTX')).Hash $beforeHeader 'Header triage is read-only'
     Write-Host 'Hayabusa comparison regression checks passed.'
 } finally {
     Remove-Item -LiteralPath $testRoot -Recurse -Force

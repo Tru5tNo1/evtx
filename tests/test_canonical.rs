@@ -50,12 +50,10 @@ fn original_evtx_exports_stable_unique_events_with_hayabusa_aliases() {
         assert!(row["_teg"]["acquired_at"].is_null());
         assert_eq!(row["_teg"]["source"]["sha256"].as_str().unwrap().len(), 64);
         assert!(ids.insert(row["_teg"]["event_uid"].as_str().unwrap().to_owned()));
-        assert!(
-            row["_teg"]["rendered_xml"]
-                .as_str()
-                .unwrap()
-                .contains("<Event")
-        );
+        assert!(row["_teg"]["rendered_xml"]
+            .as_str()
+            .unwrap()
+            .contains("<Event"));
         if row["EventID"] == 4720 {
             detection_event = true;
             assert_eq!(
@@ -215,12 +213,10 @@ fn physical_offsets_include_skipped_empty_chunks() {
         .with_configuration(evtx::ParserSettings::default().num_threads(4).indent(false));
     let first = parser.chunks_canonical_json_bytes(source).next().unwrap();
     assert!(!first.items.is_empty());
-    assert!(
-        first
-            .items
-            .iter()
-            .all(|i| matches!(i, evtx::RenderedChunkItem::Record { .. }))
-    );
+    assert!(first
+        .items
+        .iter()
+        .all(|i| matches!(i, evtx::RenderedChunkItem::Record { .. })));
     let event: Value =
         serde_json::from_slice(first.data.split(|b| *b == b'\n').next().unwrap()).unwrap();
     let offset = event["_teg"]["record"]["offset"].as_u64().unwrap() as usize;
@@ -244,9 +240,146 @@ fn corrupt_evtx_is_reported_as_failure_instead_of_a_silent_partial_export() {
         .get_output()
         .stderr
         .clone();
-    assert!(
-        String::from_utf8(output)
-            .unwrap()
-            .contains("Invalid EVTX chunk header magic")
+    assert!(String::from_utf8(output)
+        .unwrap()
+        .contains("Invalid EVTX chunk header magic"));
+}
+
+#[test]
+fn invalid_header_reports_source_and_does_not_publish_or_replace_output() {
+    let input = tempfile::tempdir().unwrap();
+    let output = tempfile::tempdir().unwrap();
+    let source = input.path().join("bad-header.evtx");
+    let mut bytes = std::fs::read("samples/new-user-security.evtx").unwrap();
+    bytes[..8].copy_from_slice(&[0, 0x10, 0, 0, 0x70, 2, 0, 0]);
+    std::fs::write(&source, &bytes).unwrap();
+    let target = output.path().join("bad-header.evtx.jsonl");
+    for previous in [false, true] {
+        if previous {
+            std::fs::write(&target, b"previous complete export\n").unwrap();
+        }
+        let stderr = assert_cmd::cargo::cargo_bin_cmd!("evtx_dump")
+            .args(["--canonical", "-o", "jsonl", "--no-confirm-overwrite", "-f"])
+            .arg(&target)
+            .arg(&source)
+            .assert()
+            .failure()
+            .get_output()
+            .stderr
+            .clone();
+        let stderr = String::from_utf8(stderr).unwrap();
+        assert!(stderr.contains(source.to_str().unwrap()));
+        assert!(stderr.contains("Invalid EVTX file header magic"));
+        if previous {
+            assert_eq!(
+                std::fs::read(&target).unwrap(),
+                b"previous complete export\n"
+            );
+        } else {
+            assert!(!target.exists());
+        }
+        assert_eq!(
+            std::fs::read_dir(output.path()).unwrap().count(),
+            usize::from(previous)
+        );
+    }
+    let stderr = assert_cmd::cargo::cargo_bin_cmd!("evtx_dump")
+        .args(["--canonical", "-o", "jsonl", "--no-confirm-overwrite", "-f"])
+        .arg(output.path())
+        .arg(input.path())
+        .assert()
+        .failure()
+        .get_output()
+        .stderr
+        .clone();
+    assert!(String::from_utf8(stderr)
+        .unwrap()
+        .contains(source.to_str().unwrap()));
+    assert_eq!(
+        std::fs::read(&target).unwrap(),
+        b"previous complete export\n"
     );
+    assert_eq!(std::fs::read(source).unwrap(), bytes);
+}
+
+#[test]
+fn failed_later_chunk_discards_partial_output_and_keeps_previous_export() {
+    let output = tempfile::tempdir().unwrap();
+    for previous in [false, true] {
+        let target = output.path().join("sysmon.evtx.jsonl");
+        if previous {
+            std::fs::write(&target, b"previous complete export\n").unwrap();
+        }
+        assert_cmd::cargo::cargo_bin_cmd!("evtx_dump")
+            .args([
+                "--canonical",
+                "-o",
+                "jsonl",
+                "-t",
+                "1",
+                "--no-confirm-overwrite",
+                "-f",
+            ])
+            .arg(&target)
+            .arg("samples/sysmon.evtx")
+            .assert()
+            .failure();
+        if previous {
+            assert_eq!(
+                std::fs::read(&target).unwrap(),
+                b"previous complete export\n"
+            );
+        } else {
+            assert!(!target.exists());
+        }
+        assert_eq!(
+            std::fs::read_dir(output.path()).unwrap().count(),
+            usize::from(previous)
+        );
+    }
+}
+
+#[test]
+fn directory_omits_empty_logs_and_replaces_complete_named_exports() {
+    let input = tempfile::tempdir().unwrap();
+    let output = tempfile::tempdir().unwrap();
+    let host = input.path().join("host");
+    std::fs::create_dir(&host).unwrap();
+    std::fs::copy("samples/new-user-security.evtx", host.join("Security.evtx")).unwrap();
+    std::fs::copy(
+        "samples/Microsoft-Windows-WorkFolders%4WHC.evtx",
+        host.join("Empty.evtx"),
+    )
+    .unwrap();
+    let out_host = output.path().join("host");
+    std::fs::create_dir(&out_host).unwrap();
+    let security = out_host.join("Security.evtx.jsonl");
+    let empty = out_host.join("Empty.evtx.jsonl");
+    for previous in [false, true] {
+        if previous {
+            std::fs::write(&security, b"previous complete export\n").unwrap();
+            std::fs::write(&empty, b"stale events from an earlier export\n").unwrap();
+        }
+        let stderr = assert_cmd::cargo::cargo_bin_cmd!("evtx_dump")
+            .args(["--canonical", "-o", "jsonl", "--no-confirm-overwrite", "-f"])
+            .arg(output.path())
+            .arg(input.path())
+            .assert()
+            .success()
+            .get_output()
+            .stderr
+            .clone();
+        assert!(String::from_utf8(stderr)
+            .unwrap()
+            .contains("No canonical events"));
+        assert!(!empty.exists());
+        let text = std::fs::read_to_string(&security).unwrap();
+        let records: Vec<Value> = text
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(records.len(), 4);
+        assert!(records.iter().any(|event| event["EventID"] == 4720));
+        assert_eq!(std::fs::read_dir(&out_host).unwrap().count(), 1);
+    }
 }

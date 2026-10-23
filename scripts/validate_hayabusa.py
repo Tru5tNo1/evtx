@@ -72,9 +72,9 @@ def main():
     sample = args.sample.resolve()
     binary = hayabusa / "target/release/hayabusa"
     jsonl = output / (sample.name + ".jsonl")
-    with jsonl.open("wb") as stream:
-        run([parser, "--canonical", "-o", "jsonl", "-t", "4", sample], repo,
-            output / "export.log", stream)
+    # Exercise the production named-file path, including complete-file publication.
+    run([parser, "--canonical", "-o", "jsonl", "-t", "4", sample,
+         "-f", jsonl, "--no-confirm-overwrite"], repo, output / "export.log")
     events = [json.loads(line) for line in jsonl.read_text().splitlines()]
     assert events, "No canonical events exported"
     assert all("_teg" in row for row in events)
@@ -129,6 +129,8 @@ def main():
         assert any(row[0] == rule for row in results["A"]), f"Known rule {rule} did not fire"
     summary = {
         "schema": events[0]["_teg"]["schema"],
+        "export_mode": "canonical-named-file",
+        "parser_sha256": hashlib.sha256(parser.read_bytes()).hexdigest(),
         "sample": sample.name, "sha256": source_hash, "events": len(events),
         "projection_notes_by_field": dict(collections.Counter(
             note["field"] for row in events for note in row["_teg"].get("projection_conflicts", []))),

@@ -10,6 +10,7 @@ on:
       - 'Cargo.lock'
       - 'scripts/validate_hayabusa.py'
       - 'scripts/*Hayabusa*.ps1'
+      - 'scripts/*Evtx*.ps1'
       - '.github/workflows/canonical-jsonl.yml'
 
 jobs:

@@ -15,6 +15,15 @@ The second command mirrors `evidence/host/site/*.evtx` to
 parallel. Filenames retain `.evtx` to avoid basename collisions. Directory input
 requires a separate output directory; symlink input entries are rejected.
 Existing output files require confirmation or `--no-confirm-overwrite`.
+Canonical `-f` output is staged in a temporary `.partial` file in the destination
+directory and published only after successful parsing and flushing of that EVTX.
+Errors include the source path and discard the staged file, preserving any
+previous output. Successfully parsed files with zero selected events are reported
+on stderr and produce no JSONL; an explicitly approved previous output for that
+empty source is removed to prevent stale detections. Streaming to stdout cannot
+provide these named-file guarantees: shell redirection can leave partial/empty files.
+Directory processing stops on the first error and returns nonzero; files already
+completed remain, so a failed directory run is not a complete collection export.
 Single-file and stdin input remain supported. Stdin is spooled to a temporary
 seekable file on disk, as in the original CLI, rather than accumulated in RAM.
 

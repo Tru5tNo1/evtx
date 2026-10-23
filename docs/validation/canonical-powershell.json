@@ -40,6 +40,8 @@
         "EvtxFile names the JSONL input in B; _teg.source retains EVTX provenance",
         "ExtraFieldInfo contains the canonical fields and metadata in B"
       ],
+      "export_mode": "canonical-named-file",
+      "parser_sha256": "86ad46de6f7b407371a9b26ab1f6b486f5d5c930fb873235ae7e5dc449f6f637",
       "fixture_path": "DeepBlueCLI/Powershell-Invoke-Obfuscation-many.evtx"
     },
     {
@@ -83,6 +85,8 @@
         "EvtxFile names the JSONL input in B; _teg.source retains EVTX provenance",
         "ExtraFieldInfo contains the canonical fields and metadata in B"
       ],
+      "export_mode": "canonical-named-file",
+      "parser_sha256": "86ad46de6f7b407371a9b26ab1f6b486f5d5c930fb873235ae7e5dc449f6f637",
       "fixture_path": "EVTX-to-MITRE-Attack/TA0005-Defense Evasion/T1562.001-Impair Defenses-Disable or Modify tool/ID800-4103-4104 Defender critical features disabled (PowerShell).evtx"
     },
     {
@@ -123,6 +127,8 @@
         "EvtxFile names the JSONL input in B; _teg.source retains EVTX provenance",
         "ExtraFieldInfo contains the canonical fields and metadata in B"
       ],
+      "export_mode": "canonical-named-file",
+      "parser_sha256": "86ad46de6f7b407371a9b26ab1f6b486f5d5c930fb873235ae7e5dc449f6f637",
       "fixture_path": "YamatoSecurity/ImpairDefenses/T1562.010_DowngradeAttack_PowerShell.evtx"
     }
   ]

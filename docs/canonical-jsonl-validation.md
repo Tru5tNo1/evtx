@@ -142,6 +142,40 @@ The script's synthetic regression tests exercise multiplicity, timestamp offsets
 changed levels, absent/empty/invalid exports, source hash differences and zero
 JSON detections; CI runs them in Windows PowerShell 5.1.
 
+### Invalid file headers and complete-file publication
+
+An observed `Invalid EVTX file header magic` error means the selected input does
+not begin with the eight bytes `45-6C-66-46-69-6C-65-00` (`ElfFile` followed by NUL).
+The message alone cannot distinguish a different format, an incomplete acquisition
+or a damaged header. Directory selection uses the `.evtx` extension, case
+insensitively, rather than silently filtering out bad signatures.
+
+The CLI now includes the input path even when initialization fails before the
+record loop. Canonical named output is staged beside its destination and published
+only after successful parsing and flushing. A later bad chunk discards staged
+bytes and preserves a previously approved output. Valid empty sources emit a
+diagnostic and no JSONL, preventing the empty-input panic in the pinned Hayabusa
+reader; approved stale output for an empty source is removed. This publication
+policy applies to `-f`, not to externally redirected stdout. A failed directory
+run still leaves a partial collection of individually completed files and returns
+nonzero. Previously produced partial files are not repaired or certified.
+
+Regressions exercise the reported invalid magic, a real corrupt later chunk,
+preservation of existing exports, cleanup of temporary files, actual empty EVTX
+input, successful replacement, directory hierarchy and the known account-creation
+event. The positive A/B gates now use named `-f` exports to exercise this path.
+
+To identify suspect files without parsing events or changing evidence:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\Find-InvalidEvtxHeader.ps1 `
+  -Root "$env:USERPROFILE\Desktop\logs" | Format-List
+```
+
+This reads at most eight bytes per source and reports full paths, sizes and raw
+header bytes for invalid signatures, truncated headers or read errors. A matching
+signature does not certify the rest of the EVTX. The original files remain intact.
+
 ## Projection and evidence regressions
 
 Schema 1.1.0 regression coverage includes the real Application records with
@@ -205,7 +239,7 @@ explicit acquisition time, parallel determinism, and physical offsets past
 skipped empty chunks. XML evidence is compared against the original XML renderer
 for all 2,261 events in `samples/security.evtx`.
 
-The final local runs passed 143 tests in the main crate and 20 in `utf16-simd`,
+The final local runs passed 146 tests in the main crate and 20 in `utf16-simd`,
 with zero failures and four deliberately ignored tests across both runs.
 Release build, no-default-features library check and formatting check passed.
 Clippy completed successfully with repository warnings; it is not configured as
@@ -220,25 +254,26 @@ binary was preserved outside the checkout. No PGO, fast allocator or custom
 
 Input: `samples/security_big_sample.evtx`, 30.07 MiB, 62,031 records. Seven
 interleaved measurements per mode after one warmup; output discarded equally
-to `/dev/null`. Canonical measurements include file hashing, both compiled
+to `/dev/null`. These timings write to stdout; staged named-file publication is not measured.
+Canonical measurements include file hashing, both compiled
 renderers, normalization, aliases and all metadata/evidence. They are not
 parser-only timings.
 
 | Mode | Threads | Median seconds | Input MiB/s | Peak RSS KiB |
 | --- | ---: | ---: | ---: | ---: |
-| Original JSONL | 1 | 0.0713 | 421.8 | 13,184 |
-| Current legacy JSONL | 1 | 0.0738 | 407.6 | 13,184 |
-| Canonical JSONL | 1 | 1.1575 | 26.0 | 13,184 |
-| Original separate attributes | 1 | 0.2791 | 107.7 | 13,184 |
-| Original JSONL | 4 | 0.0467 | 643.7 | 13,184 |
-| Current legacy JSONL | 4 | 0.0417 | 721.2 | 13,184 |
-| Canonical JSONL | 4 | 0.4520 | 66.5 | 13,184 |
-| Original separate attributes | 4 | 0.1235 | 243.5 | 14,112 |
+| Original JSONL | 1 | 0.0762 | 394.6 | 13,184 |
+| Current legacy JSONL | 1 | 0.0776 | 387.2 | 13,184 |
+| Canonical JSONL | 1 | 1.4220 | 21.1 | 13,184 |
+| Original separate attributes | 1 | 0.3343 | 89.9 | 13,184 |
+| Original JSONL | 4 | 0.0588 | 511.8 | 13,184 |
+| Current legacy JSONL | 4 | 0.0481 | 624.6 | 13,184 |
+| Canonical JSONL | 4 | 0.7469 | 40.3 | 13,184 |
+| Original separate attributes | 4 | 0.2151 | 139.8 | 14,120 |
 
-Canonical output is 214,610,017 bytes versus 53,439,594 bytes for original JSONL
+Canonical output is 214,672,048 bytes versus 53,439,594 bytes for original JSONL
 (4.02×); both contain exactly 62,031 records. Canonical mode emits approximately
-137,237 events/s at four threads on this fixture, with bounded chunk concurrency.
-It is **9.7× slower than original lossy JSONL** at four threads, and 3.7× slower
+83,050 events/s at four threads on this fixture, with bounded chunk concurrency.
+It is **12.7× slower than original lossy JSONL** at four threads, and 3.5× slower
 than the original separate-attributes output, which lacks the evidence,
 provenance and compatibility envelope. These are materially different workloads;
 the overhead is a cost, not a throughput improvement. The legacy measurements

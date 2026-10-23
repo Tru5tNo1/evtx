@@ -12,7 +12,7 @@ use std::io::{self, BufWriter, Seek, SeekFrom, Write};
 use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use tempfile::tempfile;
+use tempfile::{NamedTempFile, tempfile};
 
 #[path = "evtx_dump/apply_wevt_cache.rs"]
 mod apply_wevt_cache;
@@ -66,10 +66,17 @@ struct EvtxDump {
     show_record_number: bool,
     output_format: EvtxOutputFormat,
     output: Box<dyn Write>,
+    staged_output: Option<StagedOutput>,
     verbosity_level: Option<Level>,
     stop_after_error: bool,
     /// When set, only the specified events (offseted reltaive to file) will be outputted.
     ranges: Option<Ranges>,
+}
+
+struct StagedOutput {
+    file: NamedTempFile,
+    target: PathBuf,
+    replace_existing: bool,
 }
 
 impl EvtxDump {
@@ -187,16 +194,36 @@ impl EvtxDump {
                 }
             }
         }
+        let mut staged_output = None;
         let output: Box<dyn Write> = if let Some(path) = output_path {
-            Box::new(BufWriter::new(
-                Self::create_output_file(&path, !matches.get_flag("no-confirm-overwrite"))
-                    .with_context(|| {
-                        format!(
-                            "An error occurred while creating output file at `{}`",
-                            path.display()
-                        )
-                    })?,
-            ))
+            let prompt = !matches.get_flag("no-confirm-overwrite");
+            let writer = if canonical {
+                let replace_existing = Self::prepare_output_path(&path, prompt)?;
+                let parent = path
+                    .parent()
+                    .filter(|p| !p.as_os_str().is_empty())
+                    .unwrap_or(Path::new("."));
+                let temporary = tempfile::Builder::new()
+                    .prefix(".evtx_dump-")
+                    .suffix(".partial")
+                    .tempfile_in(parent)
+                    .with_context(|| format!("Failed to stage output for {}", path.display()))?;
+                let writer = temporary.reopen()?;
+                staged_output = Some(StagedOutput {
+                    file: temporary,
+                    target: path,
+                    replace_existing,
+                });
+                writer
+            } else {
+                Self::create_output_file(&path, prompt).with_context(|| {
+                    format!(
+                        "An error occurred while creating output file at `{}`",
+                        path.display()
+                    )
+                })?
+            };
+            Box::new(BufWriter::new(writer))
         } else {
             Box::new(BufWriter::new(io::stdout()))
         };
@@ -225,6 +252,7 @@ impl EvtxDump {
             show_record_number: !no_show_record_number,
             output_format,
             output,
+            staged_output,
             verbosity_level,
             stop_after_error,
             ranges: event_ranges,
@@ -233,6 +261,11 @@ impl EvtxDump {
 
     /// Main entry point for `EvtxDump`
     pub fn run(&mut self) -> Result<()> {
+        self.run_inner()
+            .with_context(|| format!("Input EVTX: {}", self.input.display()))
+    }
+
+    fn run_inner(&mut self) -> Result<()> {
         if let Err(err) = self.try_to_initialize_logging() {
             eprintln!("{:?}", err);
         }
@@ -252,11 +285,9 @@ impl EvtxDump {
             EvtxParser::from_read_seek(file)?.with_configuration(self.parser_settings.clone());
         if let Some(source) = source {
             for chunk in parser.chunks_canonical_json_bytes(source) {
-                self.dump_chunk(chunk)
-                    .with_context(|| format!("Input EVTX: {}", self.input.display()))?;
+                self.dump_chunk(chunk)?;
             }
-            self.output.flush()?;
-            return Ok(());
+            return self.finish_output();
         }
 
         match self.output_format {
@@ -272,7 +303,41 @@ impl EvtxDump {
             }
         };
 
+        self.finish_output()
+    }
+
+    fn finish_output(&mut self) -> Result<()> {
         self.output.flush()?;
+        if let Some(staged) = self.staged_output.take() {
+            // Close the buffered writer before rename/removal, including on Windows.
+            drop(std::mem::replace(&mut self.output, Box::new(io::sink())));
+            if staged.file.as_file().metadata()?.len() == 0 {
+                if staged.replace_existing && staged.target.exists() {
+                    fs::remove_file(&staged.target)?;
+                }
+                eprintln!(
+                    "No canonical events in {}; no JSONL published",
+                    self.input.display()
+                );
+            } else if staged.replace_existing {
+                staged.file.persist(&staged.target).with_context(|| {
+                    format!(
+                        "Failed to publish complete JSONL at {}",
+                        staged.target.display()
+                    )
+                })?;
+            } else {
+                staged
+                    .file
+                    .persist_noclobber(&staged.target)
+                    .with_context(|| {
+                        format!(
+                            "Failed to publish complete JSONL at {}",
+                            staged.target.display()
+                        )
+                    })?;
+            }
+        }
         Ok(())
     }
 
@@ -314,8 +379,12 @@ impl EvtxDump {
 
     /// If `prompt` is passed, will display a confirmation prompt before overwriting files.
     fn create_output_file(path: impl AsRef<Path>, prompt: bool) -> Result<File> {
-        let p = path.as_ref();
+        Self::prepare_output_path(path.as_ref(), prompt)?;
+        Ok(File::create(path)?)
+    }
 
+    /// Approve replacement and create parents without truncating an existing export.
+    fn prepare_output_path(p: &Path, prompt: bool) -> Result<bool> {
         if p.is_dir() {
             bail!(
                 "There is a directory at {}, refusing to overwrite",
@@ -323,7 +392,8 @@ impl EvtxDump {
             );
         }
 
-        if p.exists() {
+        let exists = p.exists();
+        if exists {
             if prompt {
                 match Confirm::new()
                     .with_prompt(format!(
@@ -333,12 +403,10 @@ impl EvtxDump {
                     .default(false)
                     .interact()
                 {
-                    Ok(true) => Ok(File::create(p)?),
+                    Ok(true) => (),
                     Ok(false) => bail!("Cancelled"),
                     Err(_e) => bail!("Failed to display confirmation prompt"),
                 }
-            } else {
-                Ok(File::create(p)?)
             }
         } else {
             // Ok to assume p is not an existing directory
@@ -346,15 +414,14 @@ impl EvtxDump {
                 Some(parent) =>
                 // Parent exist
                 {
-                    if !parent.exists() {
+                    if !parent.as_os_str().is_empty() && !parent.exists() {
                         fs::create_dir_all(parent)?;
                     }
-
-                    Ok(File::create(p)?)
                 }
                 None => bail!("Output file cannot be root."),
             }
         }
+        Ok(exists)
     }
 
     /// Write one rendered chunk: a single `write_all` on the common path, or a

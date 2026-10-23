@@ -34,5 +34,7 @@
   "expected_differences": [
     "EvtxFile names the JSONL input in B; _teg.source retains EVTX provenance",
     "ExtraFieldInfo contains the canonical fields and metadata in B"
-  ]
+  ],
+  "export_mode": "canonical-named-file",
+  "parser_sha256": "86ad46de6f7b407371a9b26ab1f6b486f5d5c930fb873235ae7e5dc449f6f637"
 }
