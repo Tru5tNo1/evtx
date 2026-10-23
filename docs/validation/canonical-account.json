@@ -10,6 +10,11 @@
     "metadata-control": 3
   },
   "unique_rules": 3,
+  "powershell": {
+    "max_scriptblock_chars": 0
+  },
+  "required_rules": [],
+  "native_channel_filter_disabled": true,
   "compared_fields": [
     "RuleID",
     "RecordID",

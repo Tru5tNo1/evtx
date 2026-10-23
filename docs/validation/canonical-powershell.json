@@ -1,0 +1,129 @@
+{
+  "fixture_repository": "https://github.com/Yamato-Security/hayabusa-sample-evtx",
+  "fixture_commit": "0845333ecb4afcf64c55c6e10946383f168f308c",
+  "cases": [
+    {
+      "schema": "evtx-teg/1.1.0",
+      "sample": "Powershell-Invoke-Obfuscation-many.evtx",
+      "sha256": "2fa243e52ab2bba2ad3bc7a1a14ea653a1508575e703c494cfc36e78c219a5ad",
+      "events": 302,
+      "projection_notes_by_field": {},
+      "detections": {
+        "A": 390,
+        "B": 390,
+        "metadata-control": 390
+      },
+      "unique_rules": 14,
+      "powershell": {
+        "scriptblock_events": 302,
+        "scriptblock_fields_compared": 1208,
+        "multipart_events": 68,
+        "max_scriptblock_chars": 19659
+      },
+      "required_rules": [
+        "73be1519-4648-4ed7-b305-605504afc242"
+      ],
+      "native_channel_filter_disabled": true,
+      "compared_fields": [
+        "RuleID",
+        "RecordID",
+        "Timestamp",
+        "Level",
+        "Computer",
+        "Channel",
+        "EventID"
+      ],
+      "equivalent": true,
+      "hayabusa_commit": "a5f0e010893a8c388e693019e3fbb8f374a9f9c0",
+      "rules_commit": "e9a98d49313eed67fe1a2c21c0b108e04fdebe66",
+      "expected_differences": [
+        "EvtxFile names the JSONL input in B; _teg.source retains EVTX provenance",
+        "ExtraFieldInfo contains the canonical fields and metadata in B"
+      ],
+      "fixture_path": "DeepBlueCLI/Powershell-Invoke-Obfuscation-many.evtx"
+    },
+    {
+      "schema": "evtx-teg/1.1.0",
+      "sample": "ID800-4103-4104 Defender critical features disabled (PowerShell).evtx",
+      "sha256": "0dc4798e88c84a54d39cde42613fdd4e521d9bc9a1832e62ae8e56aac10afb4c",
+      "events": 50,
+      "projection_notes_by_field": {
+        "Data": 20
+      },
+      "detections": {
+        "A": 34,
+        "B": 34,
+        "metadata-control": 34
+      },
+      "unique_rules": 3,
+      "powershell": {
+        "classic_events": 20,
+        "scriptblock_events": 10,
+        "scriptblock_fields_compared": 40,
+        "multipart_events": 0,
+        "max_scriptblock_chars": 57
+      },
+      "required_rules": [
+        "6074ad34-a80f-fdd9-5c49-e1a2fc4572c4"
+      ],
+      "native_channel_filter_disabled": true,
+      "compared_fields": [
+        "RuleID",
+        "RecordID",
+        "Timestamp",
+        "Level",
+        "Computer",
+        "Channel",
+        "EventID"
+      ],
+      "equivalent": true,
+      "hayabusa_commit": "a5f0e010893a8c388e693019e3fbb8f374a9f9c0",
+      "rules_commit": "e9a98d49313eed67fe1a2c21c0b108e04fdebe66",
+      "expected_differences": [
+        "EvtxFile names the JSONL input in B; _teg.source retains EVTX provenance",
+        "ExtraFieldInfo contains the canonical fields and metadata in B"
+      ],
+      "fixture_path": "EVTX-to-MITRE-Attack/TA0005-Defense Evasion/T1562.001-Impair Defenses-Disable or Modify tool/ID800-4103-4104 Defender critical features disabled (PowerShell).evtx"
+    },
+    {
+      "schema": "evtx-teg/1.1.0",
+      "sample": "T1562.010_DowngradeAttack_PowerShell.evtx",
+      "sha256": "3948b0d598f1d24a098933a330d00f4082ee9dc98d8e83dd1be1322a88fcba7a",
+      "events": 26,
+      "projection_notes_by_field": {
+        "Data": 26
+      },
+      "detections": {
+        "A": 4,
+        "B": 4,
+        "metadata-control": 4
+      },
+      "unique_rules": 2,
+      "powershell": {
+        "classic_events": 26,
+        "max_scriptblock_chars": 0
+      },
+      "required_rules": [
+        "bc082394-73e6-4d00-a9af-e7b524ef5085"
+      ],
+      "native_channel_filter_disabled": true,
+      "compared_fields": [
+        "RuleID",
+        "RecordID",
+        "Timestamp",
+        "Level",
+        "Computer",
+        "Channel",
+        "EventID"
+      ],
+      "equivalent": true,
+      "hayabusa_commit": "a5f0e010893a8c388e693019e3fbb8f374a9f9c0",
+      "rules_commit": "e9a98d49313eed67fe1a2c21c0b108e04fdebe66",
+      "expected_differences": [
+        "EvtxFile names the JSONL input in B; _teg.source retains EVTX provenance",
+        "ExtraFieldInfo contains the canonical fields and metadata in B"
+      ],
+      "fixture_path": "YamatoSecurity/ImpairDefenses/T1562.010_DowngradeAttack_PowerShell.evtx"
+    }
+  ]
+}

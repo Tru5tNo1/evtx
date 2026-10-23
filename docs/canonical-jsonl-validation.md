@@ -12,6 +12,9 @@ rules submodule at `e9a98d49313eed67fe1a2c21c0b108e04fdebe66`.
 | `samples/new-user-security.evtx` | 4 | 3 | 3 | 3 | 3 |
 | `samples/system.evtx` | 1,881 | 138 | 138 | 138 | 13 |
 | `samples/Application.evtx` | 6,419 | 58 | 58 | 58 | 3 |
+| PowerShell obfuscation (DeepBlueCLI) | 302 | 390 | 390 | 390 | 14 |
+| PowerShell Defender disable (EVTX-to-MITRE-Attack) | 50 | 34 | 34 | 34 | 3 |
+| PowerShell classic downgrade (YamatoSecurity) | 26 | 4 | 4 | 4 | 2 |
 
 Detection multisets match exactly on **RuleID, RecordID, Timestamp, Level,
 Computer, Channel and EventID**, including multiplicity. Output order is not used
@@ -36,6 +39,55 @@ Machine-readable results include fixture SHA-256 values and pinned revisions:
 * [Account fixture](validation/canonical-account.json)
 * [System fixture](validation/canonical-system.json)
 * [Application fixture, including collisions](validation/canonical-application.json)
+* [PowerShell classic, module and ScriptBlock fixtures](validation/canonical-powershell.json)
+
+## PowerShell detection regression coverage
+
+The three PowerShell fixtures above are originals from
+[`hayabusa-sample-evtx` at `0845333ecb4afcf64c55c6e10946383f168f308c`](https://github.com/Yamato-Security/hayabusa-sample-evtx/tree/0845333ecb4afcf64c55c6e10946383f168f308c).
+CI checks out the exact files, verifies their SHA-256 hashes and requires known
+malicious-PowerShell, Defender-tampering and downgrade Rule IDs. The results give
+filenames, hashes, counts, required rules and pinned Hayabusa/rules revisions.
+
+The obfuscation fixture includes 302 ScriptBlock events (4104), of which 68 have
+`MessageTotal > 1`; the largest fragment has 19,659 characters. All 390 detections
+match, including 69 `Potentially Malicious PwSh` detections. The Defender fixture
+contains 800, 4103 and 4104 events, with four detections of the known
+`Tamper Windows Defender - ScriptBlockLogging` rule. The classic fixture covers
+400/403/600/800, including one detected PowerShell 2.0 downgrade. These are distinct
+from `Tamper Windows Defender - PSClassic`, which targets event 600 and `Data`.
+The fixtures do not reproduce every rule or event shape in a real collection.
+
+The test also compares `ScriptBlockText`, `ScriptBlockId`, `MessageNumber` and
+`MessageTotal` between the root aliases, `Event.EventData` and retained XML.
+The two JSON projections must be identical. XML comparison accounts explicitly
+for XML's CR/CRLF normalization; it does not prove original byte equality for
+line endings. Fragment numbers and totals remain intact. Neither the exporter
+nor the pinned Hayabusa detection paths reconstructs multi-event ScriptBlocks.
+A rule whose required strings span different fragments can miss in both paths;
+this alone cannot explain an A/B difference.
+
+Source review: both input paths reach
+[`create_rec_info`/`extract_fields`](https://github.com/Yamato-Security/hayabusa/blob/a5f0e010893a8c388e693019e3fbb8f374a9f9c0/src/detections/utils.rs#L367).
+The shared [classic-field extractor](https://github.com/Yamato-Security/hayabusa/blob/a5f0e010893a8c388e693019e3fbb8f374a9f9c0/src/detections/field_extract.rs#L10)
+handles 400/403/600/800; it is not a 4104 fragment reassembler.
+
+For a fair A/B comparison, the harness disables native file/rule channel filtering
+with `-A -a`. JSON mode already disables these filters and rejects those flags.
+The native optimization can select rules from only the first channel of a
+mixed-channel file: the Defender fixture otherwise produced **zero native
+detections**. That zero was treated as failure, not accepted as equivalence.
+
+These positive fixture results do **not** resolve the larger user-reported corpus:
+498,312 native detections versus 416,561 through JSONL, a difference of 81,751.
+The event counters also differ (8,884,077 versus 8,252,361), but native Hayabusa
+counts attempted records before handling parser errors. Consequently the counter
+difference is not proof of that many valid events being lost. The collection
+requires per-file coverage and per-event comparison using identical versions,
+rules and filters. An export that stopped on error may be incomplete. No claim
+of corpus-wide equivalence or of a confirmed ScriptBlock parsing defect is made.
+
+## Projection and evidence regressions
 
 Schema 1.1.0 regression coverage includes the real Application records with
 different `System.Version`/`EventData.Version` and `System.EventID`/`EventData.EventID`.
